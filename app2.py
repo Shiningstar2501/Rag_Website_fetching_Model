@@ -66,9 +66,11 @@ def embed_and_store_chunks(chunks):
     return vectorstore
 
 # Retrieve relevant chunks
-def retrieve_relevant_chunks(vectorstore, question, k=5):
+def retrieve_relevant_chunks(vectorstore, question, k=70):
     print(f"🔎 Retrieving top {k} chunks for: '{question}'")
     return vectorstore.similarity_search(question, k=k)
+
+# def extractehhei=kr ki
 
 # Ask LLM the final question
 def ask_llm_about_embassy(llm, retrieved_chunks, question):
@@ -76,22 +78,23 @@ def ask_llm_about_embassy(llm, retrieved_chunks, question):
     chain = LLMChain(llm=llm, prompt=qa_prompt)
     print("🧠 Thinking...")
     result = chain.invoke({"text": combined_text, "question": question})
+    print(result)
     return result
 
 # Extract fields from LLM response using simple parsing
-def extract_field(field_name, llm_response):
-    text = llm_response["text"] if isinstance(llm_response, dict) else llm_response
-    lines = text.splitlines()
-    for line in lines:
-        if field_name.lower() in line.lower():
-            return line.split(":", 1)[-1].strip()
-    return "Not Found"
+# def extract_field(field_name, llm_response):
+#     text = llm_response["text"] if isinstance(llm_response, dict) else llm_response
+#     lines = text.splitlines()
+#     for line in lines:
+#         if field_name.lower() in line.lower():
+#             return line.split(":", 1)[-1].strip()
+#     return "Not Found"
 
 # Crawl all pages (homepage + navbar)
 async def crawl_all_pages_and_collect_text(url):
     all_pages_data = []
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(headless=False)
         page = await browser.new_page()
         await page.goto(url, timeout=60000)
 
@@ -112,7 +115,7 @@ async def crawl_all_pages_and_collect_text(url):
 
         for link in navbar_links:
             try:
-                await page.goto(link, timeout=60000)
+                await page.goto(link, timeout=90000)
                 time.sleep(1)
                 text = await page.inner_text('body')
                 all_pages_data.append(("NavbarPage", link, text))
@@ -123,27 +126,44 @@ async def crawl_all_pages_and_collect_text(url):
         return all_pages_data
 
 # MAIN FLOW
-file_path = "Extracted_Embassy_Links (3).xlsx"  # Replace with actual uploaded file
+file_path = "dataset (4).xlsx"  # Replace with actual uploaded file
 urls, df = read_urls_from_excel(file_path)
+print(df.head)
 results = {}
 
+import os
+
+output_path = "final_output_file(152).xlsx"
+
+# If the file doesn't exist, create it with headers
+if not os.path.exists(output_path):
+    df_blank = pd.DataFrame(columns=["URL", "Extracted_Info"])
+    df_blank.to_excel(output_path, index=False)
+    print("📝 Created new Excel file with headers.")
+
+# Now inside the loop, append row-by-row
 for url in urls:
     print(f"\n🌐 Processing: {url}")
+    
     all_pages_data = asyncio.run(crawl_all_pages_and_collect_text(url))
     chunks = split_text_into_chunks(all_pages_data)
-    vectorstore = embed_and_store_chunks(chunks)
+    vectorstore = embed_and_store_chunks(chunks) 
+    
     question = "What is the physical address, telephone number, email ID, and office hours of this embassy?"
     retrieved_chunks = retrieve_relevant_chunks(vectorstore, question)
     llm_answer = ask_llm_about_embassy(llm, retrieved_chunks, question)
     llm_answer_text = llm_answer["text"]
 
-    results[url] = {
-        "Address": extract_field("Address", llm_answer_text),
-        "Phone": extract_field("Telephone", llm_answer_text),
-        "Email": extract_field("Email", llm_answer),
-        "OfficeHours": extract_field("Office Hours", llm_answer)
+    result_row = {
+        "URL": url,
+        "Address": llm_answer,#extract_field("Address", llm_answer),
+        "Phone": llm_answer,#extract_field("Telephone", llm_answer),
+        "Email": llm_answer,#extract_field("Email", llm_answer),
+        "OfficeHours": llm_answer#extract_field("Office Hours", llm_answer)
     }
 
-# Save results
-output_path = "output_file.xlsx"
-write_results_to_excel(df, results, output_path)
+    # Load existing file and append the new row
+    df_existing = pd.read_excel(output_path)
+    df_updated = pd.concat([df_existing, pd.DataFrame([result_row])], ignore_index=True)
+    df_updated.to_excel(output_path, index=False)
+    print(f"✅ Saved data for {url}")
